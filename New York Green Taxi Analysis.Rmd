@@ -1,0 +1,608 @@
+---
+title: "Capital One Challenge: Analysis On NYC Green Taxis"
+author: "Zeen Liu"
+date: "07/29/2017"
+output: html_document
+---
+
+
+## 1.Business Understanding
+
+New York Ciity is the most populous city in the United States, located at the southern tip od the state of New York. The taxis of New York City are widely recognized icons of the city and come in two varieties: yellow and green.Our project is focused on the green taxis in New York City area. The green taxis(street hail vehicles,commonly konwn as "boro taxis"), which began to appear in August 2013, are allowed to pick up passengers in Upper Manhattan, the Bronx, Brooklyn, Queens, and Staten Island.
+
+Our data is comming form NYC Taxi and Limousine Commission (TLC) which were collected in September 2015. The project aims to explore some relations which are hidden in NYC green taxi trips data. One interesting find is the tip percentage is correlated to the pick-up/drop-off location compared to the center point of the city through transforming the longitude/latitude variable. Moreover, given all other variables are the same, tip percentage varies between from-airport ride and to-airport ride.
+
+
+## 2.Question Of Interest
+
+
+### Question 1
+  >* *Programmatically download and load into analytical tool the trip data for September 2015.*
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+#Using fread in data.table for importing data from csv directly into R.
+if(!require('data.table')){install.packages('data.table'); require('data.table')}
+if(!require('curl')){install.packages('curl'); require('curl')}
+green_taxi<-fread("https://s3.amazonaws.com/nyc-tlc/trip+data/green_tripdata_2015-09.csv")
+```
+ 
+ 
+  >* *Report how many rows and columns of data you have loaded.*
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+cat('The NYC Green Taxi data set in september 2015 includes', nrow(green_taxi), 'observations and', ncol(green_taxi), 'variables.')
+```
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+#check the summary table to get a basic understanding of data.
+summary(green_taxi)
+```
+
+
+### Data cleaning and manipulation
+
+First we creat time variables **week_day** and **num_week** for further use.
+
+Before moving to analysis part, the data should be cleaned and manipulated first. From the summary table, some missing values are found in the data, some values are recorded inappropriately, such as there are some negative values in Fare_amount. 
+
+There are two simple ways to handle this, one is  just deleting the observations with missing values, the other way is to fill the NA with mean(numeric variables or mode(categorical variables).
+
+First looking at **Trip_type**, there are only 4 observations with missing value, and we have over 1000000 observations, so it is safe to delete observations with missing value since the number of observations is large enough, and the number of missing value is only a small fraction of it.
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+#creat time variables
+if(!require('lubridate')){install.packages('lubridate'); require('lubridate')}
+green_taxi <- as.data.frame(green_taxi)
+pick_time<- strptime(green_taxi$lpep_pickup_datetime,"%Y-%m-%d %H:%M:%S")
+week_day <- weekdays(as.Date(pick_time))
+green_taxi$week_day <- as.factor(week_day)
+green_taxi$num_week <- as.factor(week(pick_time)-34)
+
+##Delete the observations with missing values in Trip_type
+green_clean<- green_taxi[is.na(green_taxi[ , 21]) == 0, ]
+```
+
+From the summary, some negative values or o appear in **Tip_amount, Tolls_amount, Fare_amount, Total_amount and etc**. Based on the data dictionary and common knowledge, the observations with inappropriate values will be deleted. Besides, the **RateCodeID** is a categorical variable from 1 to 6 according to the data dictionatry. Therefore, the max value of 99 does not make sense. 0 in lattitude and longitude should also be deleted.
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+#Delete observations with negative values in Extra, MTA_tax, Tip_amount, Tolls_amount, improvement_surcharge
+
+for (i in c(13:16,18))
+  green_clean <- green_clean[green_clean[,i] >= 0, ]
+
+#Delete observations with negative values or o in Trip_distance, Fare_amount, Total_amount
+for (i in c(10:12,19))
+  green_clean <- green_clean[green_clean[,i] > 0, ]
+
+#Delete the observations with error in RateCodeId
+green_clean <- green_clean[green_clean$RateCodeID <= 6,]
+
+#Delete observations with zero in the lattitude/longitude.
+for (i in c(6:9))
+  green_clean <- green_clean[green_clean[,i] != 0, ]
+
+#Using as.factor function to ensure that categorical variables treated correctedly
+green_clean$RateCodeID <- as.factor(green_clean$RateCodeID)
+green_clean$Payment_type <- as.factor(green_clean$Payment_type)
+green_clean$Trip_type <- as.factor(green_clean$Trip_type)
+
+summary(green_clean)
+```
+
+Seeing form the summary table, some exteme values can be found such as 300 in **Tip_amount**, they are not deleted in this step, but those observations with exteme values should be treated carefully in the following analysis.
+
+```{r}
+#print result
+cat("Total observations in raw data is",nrow(green_taxi),", total observations in cleaned data is",nrow(green_clean),",deleting",nrow(green_taxi)-nrow(green_clean),"observations.", "The cleaned data set is", round(nrow(green_clean)/nrow(green_taxi)*100,2),"% of the original data.")
+```
+
+
+
+### Question 2
+  >* *Plot a histogram of the number of the trip distance ("Trip Distance").*
+Here a histogram of Trip Distance is plotted. Since most of the trip distance is less than 15 miles, so the X axis is limited between 0 and 15. 
+
+```{r out.width='70%',fig.align = "center"}
+#loading package
+if(!require('ggplot2')){install.packages('ggplot2'); require('ggplot2')}
+#Using ggplot to plot histogram
+ggplot(data=green_clean, aes(green_clean$Trip_distance)) + 
+  geom_histogram(breaks=seq(0, 15, by = 0.2), col="red", fill="green", alpha = .2) + 
+  labs(title="Figure 1. Histogram for Trip Distance of NYC Green Taxi in 2015 September") +
+  labs(x="Trip Distance(in miles)", y="Count") + 
+  xlim(c(0,15))
+
+cat("There are about", round(sum(green_clean$Trip_distance < 10)/nrow(green_clean)*100, 2), "% trips are less than 10 miles.", '\n')
+```
+  
+  
+  
+  >* *Report any structure you find and any hypotheses you have about that structure.*
+  
+Seeing from the histogram, the distribution of the trip distance is right skewed, that means the the mode of trip distance is smaller than the median of trip distance, and the median is smaller than the average of the trip distance for green taxi. The plot also shows most of passengers' trip distance is smaller than 10 miles, which is around 97%. This happens may because New York City area is highly concentrated, living Service Facilities are everywhere, so people living there don't need to take a long trip in their daily life.
+
+**This distribution has a structure of log normal disttribution.**
+
+To test whether it is log normal distribution, we can either estimate skewness test: skewness <0 or test log(Trip_distance) is normal distribution. The distribution is right skewed because the fact that people taking a short ride, for example, going to work.
+
+```{r out.width='70%', echo=TRUE, fig.align="center", message=FALSE, warning=FALSE}
+#plot pie chart
+ggplot(green_clean, aes(x = factor(1), fill = RateCodeID)) + geom_bar(width = 1) + coord_polar(theta = "y") + ggtitle("Figure 2. Pie chart of trip distance by RateCodeID")
+
+```
+To explore further, the pie plot shows the most of observations is belonged to **RateCodeID=1**, which indicate most of trips use standard rate. **RateCodeID=5** comes leads second. 
+
+```{r out.width='70%', echo=TRUE, fig.align="center", message=FALSE, warning=FALSE}
+ggplot(green_clean, aes(Trip_distance, fill = RateCodeID)) + geom_histogram(breaks=seq(0, 15, by = 0.2), col="red") + 
+  labs(title="Figure 3. Histogram for Trip Distance of NYC Green Taxi in 2015 September") +
+  labs(x="Trip Distance(in miles)", y="Count") + 
+  xlim(c(0,15))
+```
+From Figure 3, We can see that the right skewness of the distribution of trip distance when RatecodeID is one contributes to the right skewness of distribution of trip distance.
+
+
+
+### Question 3
+  >* *Report mean and median trip distance grouped by hour of day.*
+  
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+#Using strptime function to get pick up day hour
+Day_hour <- strptime(green_clean$lpep_pickup_datetime,"%Y-%m-%d %H:%M:%S")[[3]]
+#Calculate the man and median by tapply function
+green_clean$Day_hour<- as.factor(Day_hour)
+Distance_mean<- tapply(green_clean$Trip_distance, green_clean$Day_hour, mean)
+Distance_median<- tapply(green_clean$Trip_distance, green_clean$Day_hour, median)
+dis_hour <- rbind(Distance_mean, Distance_median)
+dis_hour
+
+```
+
+
+
+>* *We'd like to get a rough sense of identifying trips that originate or terminate at one of the NYC area    airports. Can you provide a count of how many transactions fit this criteria, the average fair, and any other interesting characteristics of these trips.*
+
+**Missing counts in the airport:**
+
+Checking form the website.  URL:http://www.nyc.gov/html/tlc/html/about/trip_record_data.shtml
+"All trips between JFK International Airport and New York City destinations other than Manhattan will use that standard metered rate."
+
+The trips originates or terminates at JFK airport recorded as **RateCodeID=2**,the trips originates or terminates at Newark airport recorded **RateCodeID=3**, but the trips form/to LGA and the trips from/to New York City destinations other than Manhattan should be conuted. Google map helps to find those observations, the trips start or end in the circle which are drawn in the map are identified as airport trips. First find the center of the airport by latitude and longitude, then calculating the distance from the center. If distance is greater than radius, recorded as "not airport", else recorded as airport trip.
+
+```{r echo=FALSE, out.width='70%',fig.align = "center"}
+knitr::include_graphics('C:/Users/zeen/Desktop/JFK.PNG')
+```
+
+```{r echo=FALSE, out.width='70%',fig.align = "center"}
+knitr::include_graphics('C:/Users/zeen/Desktop/LGA.PNG')
+```
+ 
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+#build new variable "Airport" to record the airport trip which gained from RatecodeID
+air_taxi<-green_clean
+air_taxi$Airport<-"Not airport"
+air_taxi$Airport[air_taxi$RateCodeID == 2]<- "JFK"
+air_taxi$Airport[air_taxi$RateCodeID == 3]<- "NWK"
+#calculate the distance from the center of the LGA airport
+LGA_loc <- c(40.7724,-73.8668) 
+air_taxi$LGA_dist_pick <- sqrt((air_taxi$Pickup_latitude - LGA_loc[1])^2 + (air_taxi$Pickup_longitude - LGA_loc[2])^2)
+air_taxi$LGA_dist_drop <- sqrt((air_taxi$Dropoff_latitude - LGA_loc[1])^2 + (air_taxi$Dropoff_longitude - LGA_loc[2])^2)
+#calculate the distance from the center of the JFK airport
+JFK_loc <- c(40.64415,-73.7872)
+air_taxi$JFK_dist_pick <- sqrt((air_taxi$Pickup_latitude - JFK_loc[1])^2 + (air_taxi$Pickup_longitude - JFK_loc[2])^2)
+air_taxi$JFK_dist_drop <- sqrt((air_taxi$Dropoff_latitude - JFK_loc[1])^2 + (air_taxi$Dropoff_longitude - JFK_loc[2])^2) 
+#distance smaller than radius set to each airport, store index vector
+index_LGA<- ((air_taxi$LGA_dist_pick<0.0054 & air_taxi$JFK_dist_drop>= 0.065 )| (air_taxi$LGA_dist_drop<0.0054 & air_taxi$JFK_dist_pick>= 0.065)) & air_taxi$Airport=="Not airport"
+index_JFK<- ((air_taxi$JFK_dist_pick<0.065 & air_taxi$LGA_dist_drop>=0.0054) | (air_taxi$JFK_dist_drop<0.065 & air_taxi$LGA_dist_pick>=0.0054)) & air_taxi$Airport=="Not airport" 
+index_LGA_JFK <- ((air_taxi$JFK_dist_pick<0.065 & air_taxi$LGA_dist_drop<0.0054) | (air_taxi$JFK_dist_drop<0.065 & air_taxi$LGA_dist_pick<0.0054)) & air_taxi$Airport=="Not airport" 
+#set values to Airport
+air_taxi$Airport[index_LGA]<- "LGA"
+air_taxi$Airport[index_JFK]<- "JFK"
+air_taxi$Airport[index_LGA_JFK]<- "JFK-LGA/LGA-JFK"
+air_taxi<- air_taxi[,-c(26:29)]
+#make them categorical
+air_taxi$Day_hour <- as.factor(air_taxi$Day_hour)
+air_taxi$Airport <- as.factor(air_taxi$Airport)
+#print result
+cat("There are roughly about", nrow(air_taxi[air_taxi$Airport!="Not airport",]), "airport trips ", "in September 2015")
+cat("Average fare (calculated by the meter) of trips to/from NYC airports:", round(mean(air_taxi$Fare_amount[air_taxi$Airport!="Not airport"]),2), "dollar.")
+cat("Average total charged amount (before tip) of trips to/from NYC airports:", round(mean(air_taxi$Total_amount[air_taxi$Airport!="Not airport"]),2), "dollar.")
+
+```
+
+Figure 4 shows that most of the airport trips are gorm/to JFK, about 75%, from/to LGA comes second, around 20%. It shows John F. Kennedy Airport is the biggest airport in New York City area, so most of the airport trips are from/to JFK. It also shows that transfer airport trips between JFK and LGA.
+```{r out.width='70%', echo=TRUE, fig.align="center", message=FALSE, warning=FALSE}
+#pie chart plot
+ggplot(air_taxi[air_taxi$Airport!="Not airport",], aes(x = factor(1), fill = Airport)) + geom_bar(width = 1) + coord_polar(theta = "y") + ggtitle("Figure 4. Pie Chart of Trip Distance by aiport")
+
+```
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+#multiplot function
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+  library(grid)
+
+  # Make a list from the ... arguments and plotlist
+  plots <- c(list(...), plotlist)
+
+  numPlots = length(plots)
+
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                    ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+
+ if (numPlots==1) {
+    print(plots[[1]])
+
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+```
+
+To explore further, we'd like to see is there any dfference between each type of airport trips.
+```{r fig.width=10, echo=TRUE, fig.height=4, message=FALSE, warning=FALSE,fig.align="center"}
+#frequence plot of trip distance by airport trips
+p1= ggplot(air_taxi[air_taxi$Airport!="Not airport",], aes(air_taxi$Trip_distance[air_taxi$Airport!="Not airport"], colour =air_taxi$Airport[air_taxi$Airport!="Not airport"])) + geom_freqpoly(binwidth = 1)     +theme(legend.text=element_text(size=10),legend.key.size = unit(0.2, "cm"),plot.title = element_text(size=10)) + xlim(c(0,30)) + ggtitle("Figure 5. Frequence plot of trip distance by airport") + scale_color_discrete(name="Airport") + labs(x="Trip distacne")
+#frequence plot of tip amount by airport trips
+p2= ggplot(air_taxi[air_taxi$Airport!="Not airport",], aes(air_taxi$Tip_amount[air_taxi$Airport!="Not airport"], colour =air_taxi$Airport[air_taxi$Airport!="Not airport"] )) +theme(legend.text=element_text(size=10),legend.key.size = unit(0.2, "cm"),plot.title = element_text(size=10)) +
+  geom_freqpoly(binwidth = 1) + xlim(c(0,20)) + ggtitle("Figure 6. Frequence plot of tip amount by airport")+scale_color_discrete(name="Airport") +labs(x="Tip amount")
+
+multiplot(p1, p2, cols=2)
+```
+Figure 5 shows that most of the airport trips are from/to JFK and LGA. Distribution of trips from/to JFK has two peaks, one is around 2.5 miles, has smaller spread, the other is around 15 miles with a larger spread. It also shows that distance from/to LGA tends to be smaller than JFk, since LGA is closer to New york City center.
+
+Figure 6 shows that tips for most of the trips is less than 5 dollars.Distribution of tip amount for each airport has similar shape.
+
+
+
+### Question 4
+  >* *Build a derived variable for tip as a percentage of the total fare.*
+
+Before we proceed with this, some cleaning is necessary. Since the initial charge for NYC green taxi is $2.5, any transaction with a smaller total amount is invalid, thus they are to be dropped.
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+#calculate the tip percentage
+tip<- air_taxi[air_taxi$Total_amount>=2.5,]
+tip$tip_per <- tip$Tip_amount/tip$Total_amount*100
+summary(tip$tip_per)
+```
+From the summary, meadian is 0, half of the taxi trips have no tips. Distribution for tip percentage is extreme right skewed, which will cause problem in regression.
+
+
+
+  >* *Build a predictive model for tip as a percentage of the total fare.*
+
+#### **feature engineering & cleaning**
+
+**Data Clean:**
+
+There are outliers in several numerical varibles. For example, some trips have 80% tip percentage, some trips' average speed are higher than 100 miles per hour. Though they may happen, they are highly influential when building the model, so the best choice is deleting them.
+
+**Feature engineering(more detailed in variable table in appendix):**
+
+* **Time variables: Week, Day of month,Day of week, hour of day, time period in each day and trip time.**
+The are created since t people may be willing to tip depending on the week days or time of the day. For instance, people are more friendly and less stressful to easily tip over the weekend. They are derived from pickup time.
+* **Speed: The ratio of trip distance to trip time.**
+* **Direction_NS (is the cab moving Northt to South?) and Direction_EW (is the cab moving East to West). **
+These are components of the two main directions, horizontal and vertical. They are derived from pickup and dropoff locations.
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+#calculate the distcnce form the center of New York City
+NYC_loc <- c(-74.0059, 40.7128)
+tip$pick_dist <-  sqrt((tip$Pickup_longitude - NYC_loc[1])^2 + (tip$Pickup_latitude - NYC_loc[2])^2)
+tip$drop_dist <-  sqrt((tip$Dropoff_longitude - NYC_loc[1])^2 + (tip$Dropoff_latitude - NYC_loc[2])^2)
+
+#creat the a categorical varibale to show wether the trio to/from Manhattan
+if(!require('sp')){install.packages('sp'); require('sp')}
+manhattan_lat <- c(40.796937,40.787945,40.782772,40.794715,40.811261,40.835371,40.868910,40.872719,40.878252,40.850557,40.836225,40.806050)
+manhattan_lon <- c(-73.949503,-73.955822,-73.943575,-73.929801,-73.934153,-73.934515,-73.911145,-73.910765,-73.926350,-73.947262,-73.949899,-73.971255)
+Man_pick<-point.in.polygon(tip$Pickup_latitude,tip$Pickup_longitude,manhattan_lat,manhattan_lon)
+tip$Man_pick[Man_pick==0] <- "not Manhattan"
+tip$Man_pick[Man_pick!=0] <- "Manhattan"
+Man_drop<-point.in.polygon(tip$Dropoff_latitude,tip$Dropoff_longitude,manhattan_lat,manhattan_lon)
+tip$Man_drop[Man_drop==0] <- "not Manhattan"
+tip$Man_drop[Man_drop!=0] <- "Manhattan"
+
+#creat time variables
+pick_time<- strptime(tip$lpep_pickup_datetime,"%Y-%m-%d %H:%M:%S")
+tip$Month_day <-pick_time[[4]]
+drop_time <- strptime(tip$Lpep_dropoff_datetime,"%Y-%m-%d %H:%M:%S")
+tip$time_diff <- as.numeric(difftime(drop_time,pick_time,units="mins"))
+names(tip)[names(tip) == 'Day_hour'] <- 'Pick_hour'
+tip$Drop_hour <- strptime(tip$Lpep_dropoff_datetime,"%Y-%m-%d %H:%M:%S")[[3]]
+tip$period <- 1
+tip$period[tip$Drop_hour>=7 & tip$Drop_hour<15] <- 2
+tip$period[tip$Drop_hour>=15 & tip$Drop_hour<23] <- 3
+
+#creat direction variables
+tip$Direction_NS <- 0
+tip$Direction_NS <- tip$Direction_NS - (tip$Pickup_latitude<tip$Dropoff_latitude)*1
+tip$Direction_NS <- tip$Direction_NS + (tip$Pickup_latitude>tip$Dropoff_latitude)*1
+tip$Direction_EW <- 0
+tip$Direction_EW <- tip$Direction_EW - (tip$Pickup_longitude<tip$Dropoff_longitude)*1
+tip$Direction_EW <- tip$Direction_EW + (tip$Pickup_longitude>tip$Dropoff_longitude)*1
+
+#Creat speed variable per min
+tip$speed <- tip$Trip_distance/(tip$time_diff/60)
+
+#creat tip_YN to identify whether the trip has tip or not
+tip$tip_YN<- 'No tips'
+tip$tip_YN[tip$tip_per>0] <- "Tips"
+
+#cleaning
+tip <- tip[tip$tip_per<75,]
+tip <- tip[tip$Tolls_amount <20,]
+tip <- tip[tip$Tolls_amount <20,]
+tip <- tip[tip$speed <100,]
+
+#make them categorical
+var_f <- c("Month_day","period","Man_pick","Man_drop","Drop_hour","Direction_NS","Direction_EW","tip_YN")
+tip[,var_f] <- lapply(tip[,var_f],as.factor)
+
+```
+
+#### **Visualizaion**
+```{r, message=FALSE, warning=FALSE,fig.align="center"}
+p1 = ggplot(data=tip, aes(tip$tip_per)) + 
+     geom_histogram(breaks=seq(0, 75, by = 5), aes(y=..density..),col="red", fill="green", alpha = .2) +
+     labs(title="Figure 7. distribution of Tip Percentage - All transaction ") +
+     labs(x="Tip Percentage(%)", y="Density") + theme(plot.title = element_text(size=10))+
+     xlim(c(0,75)) 
+p2 = ggplot(data=tip[tip$tip_per>0,], aes(tip$tip_per[tip$tip_per>0])) + 
+     geom_histogram(breaks=seq(0, 75, by = 5), aes(y=..density..), col="red", fill="green", alpha = .2) + 
+     labs(title="Figure 8. Distribution for Tip Percentage - Transaction with tips") +
+     labs(x="Tip Percentage(%)", y="Density") + theme(plot.title = element_text(size=10))+
+     xlim(c(0,75)) 
+
+multiplot(p1, p2, cols=2)
+```
+Compared with Figure 7 and Figure 8, most of passengers won't givetips, if they give tips, tip percentage is between 10% to 25%.
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+if(!require('GGally')){install.packages('GGally'); require('GGally')}
+ggpairs(tip[,c(10:12,27,28,32,38)], aes(colour = tip_YN, alpha = 0.1),title = "Figure 9. Matrix of scatter plot")
+```
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+mydata <- tip[, c(10:12,27,28)]
+cormat <- round(cor(mydata),2)
+library(reshape2)
+melted_cormat <- melt(cormat)
+
+# Get lower triangle of the correlation matrix
+  get_lower_tri<-function(cormat){
+    cormat[upper.tri(cormat)] <- NA
+    return(cormat)
+  }
+  # Get upper triangle of the correlation matrix
+  get_upper_tri <- function(cormat){
+    cormat[lower.tri(cormat)]<- NA
+    return(cormat)
+  }
+
+upper_tri <- get_upper_tri(cormat)
+
+
+melted_cormat <- melt(upper_tri, na.rm = TRUE)
+
+reorder_cormat <- function(cormat){
+# Use correlation between variables as distance
+dd <- as.dist((1-cormat)/2)
+hc <- hclust(dd)
+cormat <-cormat[hc$order, hc$order]
+}
+cormat <- reorder_cormat(cormat)
+upper_tri <- get_upper_tri(cormat)
+# Melt the correlation matrix
+melted_cormat <- melt(upper_tri, na.rm = TRUE)
+# Create a ggheatmap
+ggheatmap <- ggplot(melted_cormat, aes(Var2, Var1, fill = value))+
+ geom_tile(color = "white")+
+   ggtitle("Figure 10. Heat map for correlation table") +
+ scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+   midpoint = 0, limit = c(-1,1), space = "Lab", 
+    name="Pearson\nCorrelation") +
+  theme_minimal()+ # minimal theme
+ theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+    size = 10, hjust = 1))+
+ coord_fixed()
+#set parameter in ggplot
+ggheatmap + 
+geom_text(aes(Var2, Var1, label = value), color = "black", size = 4) +
+theme(
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  axis.ticks = element_blank(),
+  legend.justification = c(1, 0),
+  legend.position = c(0.6, 0.75),
+  legend.direction = "horizontal")+
+  guides(fill = guide_colorbar(barwidth = 8, barheight = 1,
+                title.position = "top", title.hjust = 0.5))
+```
+
+Seeing form Figure 9 and Figure 10, pick distance and drop distance is highly positive correlated, and time_diff(trip time) and fare amount is highly corralted. Those pairs should be treated carefully.
+
+#### **Choice of model**
+Our target variable is tip percentage, which is numeric lying between 0 and 1, so regression model is needed here.
+
+The first method comes into mind is multiple linear regression. For this data set, around 50% of tip percentage is 0, so multiple linear regression won't have good performance. Can we use some transformation on tip percentage? Standerlization and log transformation are considered, but after transformation, distribution of target variable is still not normal, not fit for linear regression.
+
+Regression tree is a good choice. Since regression tree can partition the space, so it can slove the problem that distribution of tip percentage is right skewed.**Generalized Boosted Regression Modeling** is performed here.
+
+#### **Gradient Boosting Machine for Tree**
+
+##### Steps for modeling
+###### 1. Spliting data into train (80%) and test(20%)
+###### 2. Using 5 fold cross-validation tuning hyper parameter in train data set
+* **shrinkage **: A shrinkage parameter applied to each tree in the expansion. Also known as the
+learning rate or step-size reduction.
+* **n.trees**: The total number of trees to fit. This is equivalent to the number of iterations and
+the number of basis functions in the additive expansion.
+* **interaction.depth**: The maximum depth of variable interactions. 1 implies an additive model, 2
+implies a model with up to 2-way interactions, etc.
+###### 3. Finding the best Hyper parameter, fit the model on train data
+###### 4. Seeing the performacne on test data
+
+The proposal is listed above. The problem is Green Taxi data is too large that the whole data can't be used. To slove this, i try to use a subset of the data to build the model. I select 15000 random observations as the training data and 5000 random observations as test data.Tuning hyper parameter on the training data, finding the parameter for best performance, then fit the model on whole training data and perdict the tip percentage on test data set, calculating out the root-mean-square error. 
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+set.seed(818)
+#variables put into model
+var_list <- c("RateCodeID","Passenger_count","Trip_distance","Fare_amount","Payment_type","Pick_hour","Airport","pick_dist","drop_dist","Man_pick","Man_drop","time_diff","period","week_day","num_week","Direction_NS","Direction_EW","tip_per")
+data_pre<- tip[,var_list]
+#random sample from data, get train and test data set
+index <- sample(1:1463516, 20000, replace=F)
+data_train <- data_pre[index[1:15000],]
+data_test <- data_pre[tail(index,5000),]
+
+```
+
+When Tuning parameter, grid search is used. For interaction depth, 1 to 4 are tried. For numbers of tree, 400,600,800 are treid. For shrikage parameter, 0.1,0.01,0.001 are tried.  
+```{r, message=FALSE, warning=FALSE, results="hide"}
+#require package
+if(!require('gbm')){install.packages('gbm'); require('gbm')}
+if(!require('plyr')){install.packages('plyr'); require('plyr')}
+library(caret)
+#set 5 fold cross validation
+control <- trainControl(method="cv", number=5)
+#set grid search
+gbmGrid <- expand.grid(interaction.depth = 1:4,
+                       shrinkage = c(0.1,0.01,0.001),
+                       n.trees = c(400,600,800),
+                       n.minobsinnode = 10)
+#training
+gbm_gridsearch <- train(tip_per~., data=data_train, method="gbm", tuneGrid=gbmGrid,metric='RMSE', trControl=control)
+
+```
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+#print result
+print(gbm_gridsearch)
+plot(gbm_gridsearch,main="Figure 11. Plot for tunning parameter")
+```
+
+Seeing from Figure 11, when interaction depth is 4, number of tree is 800, shrinkage is 0.01, we have lowest rooted-mean-square error. So we use this seeting, getting our model from the whole training data.
+```{r}
+fit.gbm <- gbm(tip_per ~ ., data=data_train, n.tree = 800,shrinkage = 0.01, interaction.depth = 4,n.minobsinnode = 10)
+summary(fit.gbm)
+```
+Seeing from variable importance, **Payment_type** has highest relative importance, this make sense since ttip only recorded when using credit card. Pick_hour, pick_distance, drop_distance, time_diff(trip time) are also quite important.
+
+After we store the model in **fit.gbm**, we predict the tip percentage on 5000 observations in test data set, calculating the RMSE.
+```{r}
+preds <- predict(fit.gbm, newdata = data_test, n.trees = 800,shrinkage=0.01,interaction.depth = 4,n.minobsinnode = 10)
+(sum((preds-data_test$tip_per)^2)/5000)^0.5
+```
+We have similar performance compared with tuning part, root-mean-square error is around 5.
+
+
+
+### Question 5 option A
+  >* *Build a derived variable representing the average speed over the course of a trip.*
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+#delete rows which mph<=1
+speed_taxi <- tip[tip$speed > 1,] 
+summary(speed_taxi$speed)
+```
+
+From the summary, distribution of speed is also right skewed.
+
+
+
+  >* *Can you perform a test to determine if the average trip speeds are materially the same in all weeks of      September? If you decide they are not the same, can you form a hypothesis regarding why they differ?*
+  
+##### **ANOVA:**
+
+To compare weekly average speed difference, an ANOVA test is performed.
+
+  >**$H_0$: All weeks in September have the same green taxi trip speed on average. **
+  
+  >**$H_a$: At least one week has the different average speed.**
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+speed_test <- aov(speed ~ week_day, data = speed_taxi)
+summary(speed_test)
+
+```
+As the p-values are extremely small (Pr < 0.0001) in the ANOVA test here. We reject the Ho at alpha=0.05 significance level. It suggests that all weeks do not have the same taxi speed on average. In the other work, at least one week has the different average speed. But notice that the Mean Sequare Error is 0.009, which is very small. It might imply that the differences between weeks could be very slight.
+
+ANOVA test shows **statistical significant** result, but we should be careful here. Significant differences (reject the null hypothesis) means that differences in group means are not likely due to sampling error.The problem is that statistically significant differences can be found even with very small differences if the sample size is large enough. In fact, differences between any sample means will be significant if the sample is large enough. So a better choice is focuing on **practical significance**. 
+
+
+
+   >* *Can you build up a hypothesis of average trip speed as a function of time of day?*
+```{r}
+hour_mean_speed <- tapply(tip$speed, tip$Pick_hour, mean)
+hour_mean_speed <- as.data.frame(hour_mean_speed)
+colnames(hour_mean_speed)[1] <- "AverageSpeed"
+ggplot(hour_mean_speed, aes(x=c(0:23))) + geom_line(aes(y=AverageSpeed)) + ggtitle("Figure 12. Hourly average speed of green Taxi in September 2015") + labs(x= "Hours of the day", y="Average speed per hour") 
+```
+
+Figure 11 shows that trip average speed reaches peak, about 18 miles per hour at 5:00 in the morning. The lowest average speed is 11 miles per hour at 16:00 in the afternoon. The plot shows clear relations between average speed and hourss of day. When time is around 8:00 in the morning and 16:00 in the afeternoon, the speed is lowest since it's rush hour, lots of people are on their way to work or go home. In the midnight, the averge speed reaches highest.
+
+##### **ARIMA model**
+
+Figure 12 shows atoucorrelation effect, time series analysis should be performed here.In time series analysis, an autoregressive integrated moving average (ARIMA) model is a generalization of an autoregressive moving average (ARMA) model. The AR part of ARIMA indicates that the evolving variable of interest is regressed on its own lagged values. The MA part indicates that the regression error is actually a linear combination of error terms whose values occurred contemporaneously and at various times in the past. The I (for "integrated") indicates that the data values have been replaced with the difference between their values and the previous values (and this differencing process may have been performed more than once). The purpose of each of these features is to make the model fit the data as well as possible.
+
+We can use auto.arima() function in R to model on average speed vs day of hour. The model with Lowest AIC is the best model.
+
+
+## Further discussion
+
+### Part to improve
+
+#### Reading data
+
+data.table and curl are used to load the data into R, it's better than read.csv, but there are more advanced packages can improve the efficiency when reading the data.
+
+#### Modeling
+
+* I should make total use of data, for example, latitude and longitude in data. **revgeocode** can be used to get location information. The limited usage for revgeocode is 25000 per day, so i don't use it at this time.
+* When using ensemble method for regression tree, the computer dosen't have enough memory to allocate the vector. we'd better find other method to model on the whole data set or find parallel computing method with ensemble method.
+* I should try different algorithms to fit the data,and compare the performance, such as random forest. I can also try different loss functions or optimizations in grediant boosted machine.
+* Find some way to improve efficiency when fitting the model.
+
+#### Statistical significance vs practical significance 
+
+In question 5 option A, though ANOVA test shows that At least one week has the different average speed, but the sample size is too large, so we should find a method to test practical significance.
+
+
+
+## Appendix
+
+### **Data dictionary fOr GBM**
+```{r echo=FALSE, echo=FALSE, fig.align="center", out.width='80%'}
+knitr::include_graphics('C:/Users/zeen/Desktop/data_dic.PNG')
+```
+
+
+## Reference
+caret package:
+http://topepo.github.io/caret/using-your-own-model-in-train.html
+
+point.in.polygon function:
+https://www.rdocumentation.org/packages/sp/versions/1.2-5/topics/point.in.polygon
+
+data dictionary:
+http://www.nyc.gov/html/tlc/downloads/pdf/data_dictionary_trip_records_green.pdf
+
+ARIMA model:
+https://en.wikipedia.org/wiki/Autoregressive_integrated_moving_average
+
+
